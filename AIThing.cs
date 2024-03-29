@@ -18,30 +18,33 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Video;
 using System.Net;
 using Y2Sharp;
+using static System.Net.WebRequestMethods;
+using File = System.IO.File;
+using System.Threading;
+using UnityEngine.UIElements;
 
 #pragma warning disable CS4014
 public class AIThing : MonoBehaviour
 {
-
-
-
-
-
-
+    public CharacterManager characterManager;
     private Random _random = new Random();
     [SerializeField] private Transform[] KrustyKrab;
     [SerializeField] private Transform[] ConchStreet;
     [SerializeField] private Transform[] OutsideKrustyKrab;
+    [SerializeField] private Transform[] apkrab;
+    [SerializeField] private Transform[] apconch;
     [SerializeField] private Transform[] SquidwardLocations;
+    [SerializeField] private Transform[] cameraLocations; // Add this line at the field declarations
+    [SerializeField] private Transform[] cumbucket;
     // Should probably change this to a safer method of storing the keys
-    [SerializeField] private string openAIKey;
-    [SerializeField] private string fakeYouUsernameOrEMail;
-    [SerializeField] private string fakeYouPassword;
+    string openAIKey = "***********************************"; // Get a key from https://platform.openai.com/api-keys
+    [SerializeField] private string fakeYouUsernameOrEMail = "*************************"; // Create an account on https://fakeyou.com
+    [SerializeField] private string fakeYouPassword = "*************************";
 
     [SerializeField] private AudioSource audioSource;
     [SerializeField] private TextMeshProUGUI topicText;
     [SerializeField] public AudioClip[] audioClips; // Put in here for a character like Gary that does not have a voice model and speaks gibberish
-
+    public GameObject[] characterPrefabs;
 
     [SerializeField] private CinemachineVirtualCamera _cinemachineVirtualCamera;
     [SerializeField] private TextMeshProUGUI subtitles;
@@ -56,7 +59,7 @@ public class AIThing : MonoBehaviour
 
     // Singleton instance of the AIDirector script
     public static AIThing Instance;
-
+    public GameObject[] gt { get; private set; }
     // Reference to the speaking character's animator
     public Animator speakingCharacterAnimator;
     private void TeleportCharacters()
@@ -66,13 +69,26 @@ public class AIThing : MonoBehaviour
     {
         { KrustyKrab, SquidwardLocations[0] },
         { ConchStreet, SquidwardLocations[1] },
-        { OutsideKrustyKrab, SquidwardLocations[2] }
+        { OutsideKrustyKrab, SquidwardLocations[2] },
+        { apkrab, SquidwardLocations[3] },
+        { apconch, SquidwardLocations[4] },
+        { cumbucket, SquidwardLocations[5] }
+    };
+        // Map each spawn point group to a camera location
+        Dictionary<Transform[], Transform> cameraLocationMap = new Dictionary<Transform[], Transform>()
+    {
+        { KrustyKrab, cameraLocations[0] },
+        { ConchStreet, cameraLocations[1] },
+        { OutsideKrustyKrab, cameraLocations[2] },
+        { apkrab, cameraLocations[3] },
+        { apconch, cameraLocations[4] },
+        { cumbucket, cameraLocations[5] }
     };
 
         // Put your spawn point arrays into a list
         List<Transform[]> spawnPointGroups = new List<Transform[]>()
     {
-        KrustyKrab, ConchStreet, OutsideKrustyKrab
+        ConchStreet, OutsideKrustyKrab, apkrab, apconch, cumbucket
     };
 
         // Select a random spawn point group
@@ -86,69 +102,59 @@ public class AIThing : MonoBehaviour
 
         int index = 0;
 
-        foreach (GameObject character in gt)
+        foreach (GameObject characterPrefab in characterPrefabs)
         {
-            // If the character is Squidward, teleport him to his special location
-            if (character.name == "squidward")
-            {
-                character.transform.position = squidwardLocation.position;
-                character.transform.rotation = squidwardLocation.rotation;
-                continue;
-            }
-
             // Select a spawn point from the shuffled list
             Transform spawnPoint = shuffledSpawnPoints[index % shuffledSpawnPoints.Count];
 
-            // Teleport the character to the spawn point
-            character.transform.position = spawnPoint.position;
-            character.transform.rotation = spawnPoint.rotation;
+            // If the character is Squidward, instantiate him at his special location
+            if (characterPrefab.name == "squidward")
+            {
+                GameObject newCharacter = Instantiate(characterPrefab, squidwardLocation.position, squidwardLocation.rotation);
+            }
+            else
+            {
+                // Instantiate a new character at the spawn point
+                GameObject newCharacter = Instantiate(characterPrefab, spawnPoint.position, spawnPoint.rotation);
+            }
+            FindAndAssignCharacterInstances();
+            // Position the Cinemachine camera at the last selected spawn point
+            if (_cinemachineVirtualCamera != null)
+            {
+                Transform cameraLocation = cameraLocationMap[spawnPoints];
+                _cinemachineVirtualCamera.transform.position = cameraLocation.position;
+                _cinemachineVirtualCamera.transform.rotation = cameraLocation.rotation;
+                TeleportNarratorToSquidward();
+            }
 
             index++;
         }
     }
-    // Awake method to set up the singleton instance
-    private void Awake()
+    private void TeleportNarratorToSquidward()
+    {
+        GameObject narrator = GameObject.Find("narrator"); // Assuming the narrator's name in the hierarchy
+        GameObject squidward = GameObject.Find("patrick(Clone)");
+
+        if (narrator != null && squidward != null)
+        {
+            narrator.transform.position = squidward.transform.position; // Teleporting to Squidward's position
+        }
+        else
+        {
+            Debug.LogWarning("Narrator or Squidward not found!");
+        }
+    }
+            // Awake method to set up the singleton instance
+            private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
         }
+        else Destroy(gameObject);
     }
     private string previousCharacter;
-    // Call this method when a character starts speaking
-    public void CharacterStartedSpeaking(Animator characterAnimator)
-    {
-        if (characterAnimator != speakingCharacterAnimator)
-        {
-            speakingCharacterAnimator = characterAnimator;
 
-            // Notify all non-speaking characters about the speaking character
-            AIMovement[] aiMovements = FindObjectsOfType<AIMovement>();
-            foreach (AIMovement aiMovement in aiMovements)
-            {
-                // Set the speaking character's transform as the target for non-speaking characters to look at
-                aiMovement.speakingCharacterTransform = speakingCharacterAnimator.transform;
-            }
-        }
-    }
-
-    // Call this method when a character stops speaking
-    public void CharacterStoppedSpeaking(Animator characterAnimator)
-    {
-        if (characterAnimator == speakingCharacterAnimator)
-        {
-            speakingCharacterAnimator = null;
-
-            // Notify all non-speaking characters that there is no speaking character anymore
-            AIMovement[] aiMovements = FindObjectsOfType<AIMovement>();
-            foreach (AIMovement aiMovement in aiMovements)
-            {
-                // Clear the target for non-speaking characters to look at
-                aiMovement.speakingCharacterTransform = null;
-            }
-        }
-    }
-    
     private void PlayRandomVideoClip()
     {
         // Select a random video clip from your array
@@ -168,21 +174,34 @@ public class AIThing : MonoBehaviour
 
     void Start()
     {
+
         TeleportCharacters();
         PlayRandomVideoClip();
-        _openAI = new OpenAIApi(openAIKey);
+        _openAI = new OpenAIApi(openAIKey, null); ;
         Init();
-        characters.Add("spongebob", GameObject.Find("spongebob"));
-        characters.Add("patrick", GameObject.Find("patrick"));
-        characters.Add("squidward", GameObject.Find("squidward"));
-        characters.Add("mrkrabs", GameObject.Find("mrkrabs"));
-        characters.Add("gary", GameObject.Find("gary"));
-        characters.Add("plankton", GameObject.Find("plankton"));
-        characters.Add("larry", GameObject.Find("larry"));
-        characters.Add("mrspuff", GameObject.Find("mrspuff"));
-        characters.Add("sandy", GameObject.Find("sandy"));
+        characters.Add("spongebob", GameObject.Find("spongebob(Clone)"));
+        characters.Add("patrick", GameObject.Find("patrick(Clone)"));
+        characters.Add("squidward", GameObject.Find("squidward(Clone)"));
+        characters.Add("mrkrabs", GameObject.Find("mrkrabs(Clone)"));
+        characters.Add("gary", GameObject.Find("gary(Clone)"));
+        characters.Add("plankton", GameObject.Find("plankton(Clone)"));
+        characters.Add("larry", GameObject.Find("larry(Clone)"));
+        characters.Add("mrspuff", GameObject.Find("mrspuff(Clone)"));
+        characters.Add("sandy", GameObject.Find("sandy(Clone)"));
         previousCharacter = "";
         currentCharacter = "";
+    }
+    private void FindAndAssignCharacterInstances()
+    {
+        gt = new GameObject[8];
+        gt[0] = GameObject.Find("mrkrabs(Clone)");
+        gt[1] = GameObject.Find("squidward(Clone)");
+        gt[2] = GameObject.Find("spongebob(Clone)");
+        gt[3] = GameObject.Find("gary(Clone)");
+        gt[4] = GameObject.Find("larry(Clone)");
+        gt[5] = GameObject.Find("sandy(Clone)");
+        gt[6] = GameObject.Find("plankton(Clone)");
+        gt[7] = GameObject.Find("patrick(Clone)");
     }
     private string currentCharacter;
     async void Init()
@@ -202,12 +221,12 @@ public class AIThing : MonoBehaviour
         List<string> blacklist = LoadBlacklist();
 
         // Pick a random topic
-        List<string> topics = LoadTopics();
+        Queue<string> topics = LoadTopics();
 
         // If there are no topics, play a video clip and restart in 10 seconds
         if (topics.Count == 0)
         {
-            PlayVideoClipAndWait(clipToPlay, "1.0.1", 15f);
+            PlayVideoClipAndWait(clipToPlay, "1.0.1", 5f);
             return;
         }
 
@@ -215,10 +234,10 @@ public class AIThing : MonoBehaviour
         DisplayTopic(topic);
 
         // Add the chosen topic to the blacklist and write it back to the file
-        UpdateBlacklist(blacklist, topic);
+        UpdateBlacklist(blacklist, topic, topics);
 
         // Play the random video clip
-        
+
 
         // Generate the dialogue
         Generate(topic);
@@ -295,10 +314,10 @@ public class AIThing : MonoBehaviour
         return new List<string>();
     }
 
-    private List<string> LoadTopics()
+    private Queue<string> LoadTopics()
     {
-        return JsonConvert.DeserializeObject<List<string>>(
-            File.ReadAllText($"{Environment.CurrentDirectory}\\Assets\\Scripts\\topics.json"));
+        return new Queue<string>(JsonConvert.DeserializeObject<List<string>>(
+            File.ReadAllText($"{Environment.CurrentDirectory}\\Assets\\Scripts\\topics.json")));
     }
 
     private void PlayVideoClipAndWait(VideoClip clip, string sceneName, float delay)
@@ -309,9 +328,9 @@ public class AIThing : MonoBehaviour
         StartCoroutine(LoadSceneAfterDelay(sceneName, delay));
     }
 
-    private string SelectTopic(List<string> topics)
+    private string SelectTopic(Queue<string> topics)
     {
-        return topics[_random.Next(0, topics.Count)];
+        return topics.Dequeue();
     }
 
     private void DisplayTopic(string topic)
@@ -322,7 +341,7 @@ public class AIThing : MonoBehaviour
         }
     }
 
-    private void UpdateBlacklist(List<string> blacklist, string topic)
+    private void UpdateBlacklist(List<string> blacklist, string topic, Queue<string> topics)
     {
         string blacklistPath = $"{Environment.CurrentDirectory}\\Assets\\Scripts\\blacklist.json";
 
@@ -331,6 +350,9 @@ public class AIThing : MonoBehaviour
             blacklist.Add(topic);
             File.WriteAllText(blacklistPath, JsonConvert.SerializeObject(blacklist));
         }
+
+        // Write the remaining topics back to the topics file
+        File.WriteAllText($"{Environment.CurrentDirectory}\\Assets\\Scripts\\topics.json", JsonConvert.SerializeObject(topics.ToList()));
     }
 
 
@@ -375,6 +397,11 @@ public class AIThing : MonoBehaviour
                 {
                     GameObject character = characters[currentCharacter];
 
+                    // Make the character look at the Cinemachine virtual camera
+                    Vector3 directionToCamera = _cinemachineVirtualCamera.transform.position - character.transform.position;
+                    directionToCamera.y = 0; // Keep the character's rotation level on the Y-axis
+                    character.transform.rotation = Quaternion.LookRotation(directionToCamera);
+
                     previousCharacter = currentCharacter;  // Store the current character as the previous character
                     currentCharacter = character.name;  // Update the current character
 
@@ -383,7 +410,10 @@ public class AIThing : MonoBehaviour
                     if (characters.ContainsKey(previousCharacter))
                     {
                         GameObject previousCharacterObject = characters[previousCharacter];
+
+                        //If using new Character script, do the new way of LookAt, otherwise do it the old way
                         StartCoroutine(TurnToSpeaker(character.transform, previousCharacterObject.transform));
+
                     }
                     Debug.Log("Camera is now following: " + currentCharacter);  // Debug statement
                     if (subtitles != null)
@@ -392,6 +422,7 @@ public class AIThing : MonoBehaviour
                     {
                         if (obj != null && obj != character && obj.name != "karen")
                         {
+
                             StartCoroutine(TurnToSpeaker(obj.transform, character.transform));
                         }
                     }
@@ -405,8 +436,16 @@ public class AIThing : MonoBehaviour
                     }
                     videoPlayer.Stop();
                     audioSource.Play();
+                    float startTime = Time.time;
                     while (audioSource.isPlaying)
                     {
+                        // Check if the playback has exceeded 2 minutes and 30 seconds
+                        if (Time.time - startTime > 150.0f) // 150 seconds = 2 minutes and 30 seconds
+                        {
+                            audioSource.Stop(); // Stop the playback if the time limit is exceeded
+                            Debug.Log("Audio playback stopped after 2 minutes and 30 seconds.");
+                            break; // Exit the while loop
+                        }
                         yield return null;
                     }
 
@@ -436,16 +475,34 @@ public class AIThing : MonoBehaviour
         List<Dialogue> dialogues = new List<Dialogue>();
 
         // Check if the topic contains a YouTube link
-        if (topic.Contains(" sings www.youtube.com/watch?v="))
+        if (topic.Contains(" sings https://www.youtube.com/watch?v="))
         {
             // Split the topic string to get the character and the video ID
-            string[] topicParts = topic.Split(new string[] { " sings www.youtube.com/watch?v=" }, StringSplitOptions.None);
+            string[] topicParts = topic.Split(new string[] { " sings https://www.youtube.com/watch?v=" }, StringSplitOptions.None);
             string character = topicParts[0].ToLower();
             string videoId = topicParts[1];
 
             // Fetch the information for the YouTube video
-            await Y2Sharp.Youtube.Video.GetInfo(videoId);
+            try
+            {
+                // Your code that might throw an error
+                await Y2Sharp.Youtube.Video.GetInfo(videoId);
+            }
 
+            catch (Exception e)
+            {
+                // Check if the error message is what you're looking for
+                if (e.Message.Contains("videoId was too short or long"))
+                {
+                    Debug.Log("Caught an error: " + e.Message);
+                    Debug.Log("Restarting scene...");
+
+                    // Get the current scene name
+                    Scene scene = SceneManager.GetActiveScene();
+                    // Reload the scene
+                    SceneManager.LoadScene(scene.name);
+                }
+            }
             // Create a new Y2Sharp.Youtube.Video object
             var video = new Y2Sharp.Youtube.Video();
 
@@ -473,7 +530,7 @@ public class AIThing : MonoBehaviour
             // Store the current character who is singing
             currentCharacter = character;
             Debug.Log("Singing character: " + currentCharacter);  // Debug statement
-
+            videoPlayer.Stop();
             // Start the coroutine that loads and plays the audio file
             StartCoroutine(LoadAndPlayAudioClipCoroutine(audioFilePath));
 
@@ -496,7 +553,7 @@ public class AIThing : MonoBehaviour
 
             List<Task> ttsTasks = CreateTTSRequestTasks(text, dialogues);
             await Task.WhenAll(ttsTasks);
-            videoPlayer.Stop();
+
             StartCoroutine(Speak(dialogues));
         }
     }
@@ -540,50 +597,50 @@ public class AIThing : MonoBehaviour
         {
             textToSay = line.Replace("SpongeBob:", "");
             voicemodelUuid = "TM:618j8qwddnsn";
-            character = "spongebob";
+            character = "spongebob(Clone)";
         }
         else if (line.StartsWith("Spongebob:"))
         {
             textToSay = line.Replace("Spongebob:", "");
             voicemodelUuid = "TM:618j8qwddnsn";
-            character = "spongebob";
+            character = "spongebob(Clone)";
         }
         else if (line.StartsWith("Patrick:"))
         {
             textToSay = line.Replace("Patrick:", "");
             voicemodelUuid = "TM:ptcaavcfhwxd";
-            character = "patrick";
+            character = "patrick(Clone)";
         }
         else if (line.StartsWith("Mr. Krabs"))
         {
             voicemodelUuid = "TM:ade4ta7rc720";
             textToSay = line.Replace("Mr. Krabs:", "");
-            character = "mrkrabs";
+            character = "mrkrabs(Clone)";
         }
         else if (line.StartsWith("Squidward:"))
         {
             voicemodelUuid = "TM:4e2xqpwqaggr";
             textToSay = line.Replace("Squidward:", "").ToUpper(); // Converting to caps because funny Loudward
             textToSay = textToSay.TrimEnd() + "!"; // Add "!" at the end of Squidward's sentences
-            character = "squidward";
+            character = "squidward(Clone)";
         }
         else if (line.StartsWith("Sandy:"))
         {
             voicemodelUuid = "TM:eaachm5yecgz";
             textToSay = line.Replace("Sandy:", "");
-            character = "sandy";
+            character = "sandy(Clone)";
         }
         else if (line.StartsWith("Gary:"))
         {
             voicemodelUuid = "TM:eaachm5yecgz";
             textToSay = line.Replace("Gary:", "");
-            character = "gary";
+            character = "gary(Clone)";
         }
         else if (line.StartsWith("Plankton:"))
         {
             voicemodelUuid = "TM:ym446j7wkewg";
             textToSay = line.Replace("Plankton:", "");
-            character = "plankton";
+            character = "plankton(Clone)";
         }
         else if (line.StartsWith("French Narrator:"))
         {
@@ -591,10 +648,16 @@ public class AIThing : MonoBehaviour
             textToSay = line.Replace("French Narrator:", "");
             character = "narrator";
         }
+        else if (line.StartsWith("Larry The Lobster:"))
+        {
+            voicemodelUuid = "TM:t57xkhm1t12q";
+            textToSay = line.Replace("Larry The Lobster:", "");
+            character = "larry(Clone)";
+        }
 
         return textToSay != "";
     }
-   
+
     private async Task CreateTTSRequest(string textToSay, string voicemodelUuid, List<Dialogue> dialogues, string character)
     {
         var jsonObj = new
@@ -643,7 +706,7 @@ public class AIThing : MonoBehaviour
             catch (JsonReaderException)
             {
                 Debug.Log("Error parsing API response. Probably due to rate limiting. Waiting 10 seconds before retrying.");
-                await Task.Delay(10000);
+                await Task.Delay(5);
                 continue;
             }
 
@@ -665,26 +728,59 @@ public class AIThing : MonoBehaviour
         }
     }
 
-    private async Task GenerateNext(string topic)
-    {
-        var request = new CreateCompletionRequest
-        {
-            Model = "text-davinci-003",
-            Prompt = $"Create a vulgar, nsfw, politically incorrect script for a scene from Spongebob where characters discuss a topic. Possible Characters Include Spongebob, Patrick, Squidward, Sandy, Mr. Krabs, Plankton and very rarely Gary and French Narrator. Use the format: Character: <dialogue>. Only reply with coherent character dialogue. Around 12 - 15 lines of dialogue with talking only. The topic is: {topic}",
-            MaxTokens = 700
-        };
-        var response = await _openAI.CreateCompletion(request);
-        if (response.Error != null || response.Choices == null)
-        {
-            await GenerateNext(topic);
-        }
-        else
-        {
-            var text = response.Choices[0].Text;
-            File.WriteAllText("Assets/Scripts/Next.txt", text);
+    //private Task GenerateNext(string topic)
+    //{
+    //    return GenerateNext(topic);
+    //}
 
-            Debug.Log("GPT Response:\n" + text);
-        }
+    private async Task GenerateNext(string topic) // , CreateChatCompletionResponse text
+    {
+        var request = new CreateChatCompletionRequest
+        {
+            Model = "gpt-3.5-turbo",
+            Messages = new List<ChatMessage>()
+            {
+                new ChatMessage()
+                {
+                    Role = "user",
+                    Content = $"Create a vulgar, nsfw, politically incorrect script for a scene from Spongebob where characters discuss a topic. Possible Characters Include Spongebob, Patrick, Squidward, Sandy, Mr. Krabs, Plankton, Larry The Lobster and very rarely Gary and French Narrator. Use the format: Character: <dialogue>. Only reply with coherent character dialogue. Around 12 - 15 lines of dialogue with talking only. The topic is: {topic}"
+                }
+            }
+        };
+        _openAI.CreateChatCompletionAsync(request,
+            (responses) => {
+                var result = string.Join("", responses.Select(response => response.Choices[0].Delta.Content));
+                Debug.Log(result);
+                File.WriteAllText("Assets/Scripts/Next.txt", result);
+            },
+            () => {
+                Debug.Log("Prompt Completed successfully. If any errors are present, make line 753 not a comment.");
+            },
+            new CancellationTokenSource()
+        );
+        //if (response.Error != null || response.Choices == null)
+        //{
+        //    await GenerateNext(topic);
+        //}
+        //else
+        //{
+        //    string text;
+        //    if (response.Choices != null && response.Choices.Count > 0)
+        //    {
+        //        text = response.Choices[0].Delta.Content;
+        //        for (int i = 1; i < response.Choices.Count; i++)
+        //        {
+        //            text += $"\n {response.Choices[i].Delta.Content}";
+        //            Debug.Log("GPT Response:\n" + text);
+        //        }
+        //    }
+        //    else
+        //    {
+        //        text = "Spongebob: Hey, Gary! What's up?\r\n\r\nGary: Meow?\r\n\r\nPatrick: What's he saying?\r\n\r\nSpongebob: I think he's asking why is Mr. Krabs is eating something?\r\n\r\nMr. Krabs: I'm not eating something!\r\n\r\nSquidward: Yeah? What are you doing?\r\n\r\nMr. Krabs: Oh, I'm just trying to take a bite of Gary.\r\n\r\nPatrick:Wait a second, Mr. Krabs do you realise Gary is a pet not a meal?\r\n\r\nMr. Krabs: But he tastes so good!\r\n\r\nSquidward: No, no, no, no, no, no, no! That's not okay, Mr. Krabs! Put Gary down!\r\n\r\nSandy: Haha, this is ridiculous!\r\n\r\nSpongebob: Maybe we should just call animal care Mr. Krabs.\r\n\r\nGary: Meow.\r\n\r\nMr. Krabs: Alright, alright. I won't eat Gary. I promise.\r\n\r\nSquidward: Thank goodness.";
+        //        Debug.Log("GPT Response:\n" + text);
+        //    }
+        //    File.WriteAllText("Assets/Scripts/Next.txt", text);
+        //}
     }
 
     private IEnumerator Speak(List<Dialogue> dialogues)
@@ -730,7 +826,7 @@ public class AIThing : MonoBehaviour
         yield return null;
     }
 
-    public GameObject[] gt;
+
 
     private IEnumerator TurnToSpeaker(Transform objectTransform, Transform speakerTransform)
     {
@@ -763,6 +859,7 @@ public class AIThing : MonoBehaviour
         }
         else if (v.state.status == "complete_success")
         {
+            videoPlayer.Stop();
             yield return HandleSuccessfulTTSRequest(d, v);
         }
         else
@@ -809,7 +906,7 @@ public class AIThing : MonoBehaviour
             {
                 foreach (GameObject obj in gt)
                 {
-                    if (obj != null && obj != character && obj.name != "karen")
+                    if (obj != null && obj != character)
                     {
                         StartCoroutine(TurnToSpeaker(obj.transform, t));
                     }
@@ -817,8 +914,11 @@ public class AIThing : MonoBehaviour
             }
         }
 
+
+
         if (subtitles != null)
             subtitles.text = d.text;
+        videoPlayer.Stop();
 
         using (var uwr = UnityWebRequestMultimedia.GetAudioClip($"https://storage.googleapis.com/vocodes-public{v.state.maybe_public_bucket_wav_audio_path}", AudioType.WAV))
         {
@@ -831,18 +931,25 @@ public class AIThing : MonoBehaviour
             {
                 audioSource.clip = DownloadHandlerAudioClip.GetContent(uwr);
 
-                if (d.character == "squidward")
+                if (d.character == "squidward(Clone)")
                 {
+                    float[] volumeLevels = new float[] { 1.5f, 0.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 3.0f };
+                    System.Random rand = new System.Random();
+
+                    int randomIndex = rand.Next(volumeLevels.Length);
+                    float randomVolume = volumeLevels[randomIndex];
+
                     float[] clipData = new float[audioSource.clip.samples * audioSource.clip.channels];
                     audioSource.clip.GetData(clipData, 0);
                     for (int i = 0; i < clipData.Length; i++)
                     {
-                        clipData[i] *= 2.0f;
+                        clipData[i] *= randomVolume;
                     }
 
                     audioSource.clip.SetData(clipData, 0);
                 }
-                else if (d.character == "gary")
+
+                else if (d.character == "gary(Clone)")
                 {
                     audioSource = GetComponent<AudioSource>();
                     audioSource.clip = audioClips[0];
@@ -852,8 +959,10 @@ public class AIThing : MonoBehaviour
                 }
 
                 GameObject character = GameObject.Find(d.character);
+
                 if (character != null)
                 {
+
                     Animator characterAnimator = character.GetComponent<Animator>();
                     if (characterAnimator != null)
                     {
@@ -862,10 +971,16 @@ public class AIThing : MonoBehaviour
                 }
 
                 audioSource.Play();
+                float audioStartTime = Time.time;
 
-                while (audioSource.isPlaying)
+                while (audioSource.isPlaying && Time.time - audioStartTime <= 60.0f)
                 {
                     yield return null;
+                }
+
+                if (audioSource.isPlaying)
+                {
+                    audioSource.Stop();
                 }
 
                 if (character != null)
@@ -878,7 +993,9 @@ public class AIThing : MonoBehaviour
                 }
 
                 while (audioSource.isPlaying)
+                {
                     yield return null;
+                }
             }
         }
     }
